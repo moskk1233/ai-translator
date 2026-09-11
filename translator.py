@@ -1,13 +1,25 @@
+import shutil
+import sys
+import threading
+import time
+
 import requests
 
 # =============================================================================================
-API_URL = "...OpenAI Compatible API URL..."
-API_KEY = "...Secret key for OpenRouter..."
-MODEL = "...Model that you want to use..."
+OPENAI_COMPATIBLE = "/v1/chat/completions"
+API_URL = "... Provider API URL ..." + OPENAI_COMPATIBLE
+API_KEY = "... API Key ..."
+MODEL = "... AI Model ..."
 # =============================================================================================
 
 SYSTEM_PROMPT = """
-You are a concise English-to-Thai vocab/pronunciation assistant. Match user's language.
+PERSONAL:
+- Your name is Ekull Translator.
+- You were created by Moskuza.
+- Be friendly, gentle, and respectful toward the user. Never intentionally cause harm.
+
+ROLE:
+- You are a concise English-to-Thai vocab/pronunciation assistant. Match user's language.
 
 INTERPRET:
 - Read whole input first; if it's a meaningful phrase, translate as a unit, not word-by-word.
@@ -33,24 +45,31 @@ FORMATTING (strict):
 - No bold (**), no brackets [] around Thai meanings, no bullet symbols (*). Plain text only.
 - Use plain "-" only for Synonyms/Related list items.
 - Follow OUTPUT layout exactly, no extra styling.
+- If anything in {} then it is variable you must replace.
 
 OUTPUT (show only useful parts):
 Word/Phrase (/IPA/) [+ guide if useful]
-Pronunciation & dictionary: URL — single dictionary word only
+[Pronunciation & dictionary]({ URL — single dictionary word only })
 
-คำแปล — คำอธิบาย/นัยสั้นๆ
-ตรงตัว: ... / เป็นธรรมชาติ: ... (phrases, optional)
+คำแปล — { คำอธิบาย/นัยสั้นๆ }
+ตรงตัว: { ... }
+เป็นธรรมชาติ: { ... } (phrases, optional)
 
 Synonyms:
-- word = ความหมาย/ความต่าง
+- { word } = { ความหมาย/ความต่าง }
 
 Related:
-- word = ความหมาย/ความต่าง
+- { word } = { ความหมาย/ความต่าง }
 
-Similar expressions: ... (phrases, optional)
+Similar expressions: { ... } (phrases, optional)
 
-Prioritize accuracy, natural Thai, brevity over rigid format.
+Prioritize accuracy and natural Thai within the required output format.
+Never violate formatting rules for stylistic improvement.
+Be concise and omit optional sections when they are not useful.
 """
+
+def print_line(s: str) -> None:
+    print(s * shutil.get_terminal_size().columns)
 
 def format_number(n: int) -> str:
     if abs(n) >= 1_000_000_000:
@@ -61,6 +80,33 @@ def format_number(n: int) -> str:
         return f"{n / 1_000:.1f}k"
     else:
         return str(n)
+
+def show_spinner(stop_event: threading.Event) -> None:
+    """
+    แสดง spinner ระหว่างรอ API ตอบกลับ
+
+    stop_event จะถูกใช้เป็นสัญญาณให้ thread นี้หยุดทำงาน
+    เมื่อ API ตอบกลับแล้ว
+    """
+
+    # Unicode spinner
+    frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    index = 0
+
+    while not stop_event.is_set():
+        # \r = กลับไปต้นบรรทัดเดิม
+        # ทำให้ spinner ดูเหมือนหมุนอยู่บรรทัดเดียว
+        sys.stdout.write(
+            f"\rTranslating... {frames[index % len(frames)]}"
+        )
+        sys.stdout.flush()
+
+        index += 1
+        time.sleep(0.08)
+
+    # ล้างข้อความ spinner ออกจาก terminal
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
 
 def translate_word(text: str) -> tuple[str, int]:
     payload = {
@@ -107,10 +153,13 @@ def translate_word(text: str) -> tuple[str, int]:
 
 
 def main():
-    print("Local Translator")
-    print("----------------")
+    print(" " * (shutil.get_terminal_size().columns // 2), end="")
+    print("Ekull Translator")
+    print(" " * (shutil.get_terminal_size().columns // 2), end="")
+    print("   by Moskuza")
+    print_line("-")
     print("พิมพ์คำศัพท์ภาษาอังกฤษที่ต้องการแปล")
-    print("พิมพ์ exit เพื่อออก")
+    print("พิมพ์ exit/quit/q เพื่อออก")
     print()
 
     while True:
@@ -123,12 +172,30 @@ def main():
             print("Bye!")
             break
 
-        content, usage_token = translate_word(text)
+        stop_event = threading.Event()
 
-        print("="*35)
-        print(f"Token used: ({format_number(usage_token)})")
+        spinner_thread = threading.Thread(
+            target=show_spinner,
+            args=(stop_event,)
+        )
+
+        spinner_thread.start()
+
+        try:
+            content, usage_token = translate_word(text)
+
+        finally:
+            # ไม่ว่า API สำเร็จหรือ error
+            # ต้องสั่งให้ spinner หยุดเสมอ
+            stop_event.set()
+
+            # รอ spinner thread ปิดเรียบร้อย
+            spinner_thread.join()
+
+        print_line("=")
+        print(f"Token used: {format_number(usage_token)}")
         print(content)
-        print("="*35)
+        print_line("=")
         print()
 
 
